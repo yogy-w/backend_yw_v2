@@ -12,11 +12,18 @@ import {
   Put,
   Delete,
   NotFoundException,
+  UseGuards
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { BannersService } from './banners.service';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { UpdateBannerDto } from './dto/update-banner.dto';
+
+// import JwtAuthGuard
+import { JwtAuthGuard } from '../auth/jwt.guard';
+import { RolesGuard } from '../roles/roles.guard';
+import { Roles } from '../roles/roles.decorator';
+
 
 @Controller('banners')
 export class BannersController {
@@ -38,6 +45,8 @@ export class BannersController {
   }
 
   // 🟢 POST new banner (with optional image)
+  @UseGuards(JwtAuthGuard,RolesGuard)
+  @Roles('admin')
   @Post()
   @UseInterceptors(FileInterceptor('image', { limits: { fileSize: 10 * 1024 * 1024 } }))
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
@@ -51,6 +60,8 @@ export class BannersController {
   }
 
   // 🟡 PUT update banner (optionally upload new image)
+  @UseGuards(JwtAuthGuard,RolesGuard)
+  @Roles('admin')
   @Put(':id')
   @UseInterceptors(FileInterceptor('image', { limits: { fileSize: 10 * 1024 * 1024 } }))
   async update(
@@ -67,6 +78,8 @@ export class BannersController {
   }
 
   // 🔴 DELETE banner (and optionally delete its file)
+  @UseGuards(JwtAuthGuard,RolesGuard)
+  @Roles('admin')
   @Delete(':id')
   async remove(@Param('id') id: string) {
     const deleted = await this.bannersService.deleteBanner(id);
