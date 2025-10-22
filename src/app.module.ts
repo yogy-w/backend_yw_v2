@@ -8,6 +8,11 @@ import { AuthModule } from './auth/auth.module';
 import { ThrottlerModule,ThrottlerGuard  } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 
+//banner
+import { ServeStaticModule } from '@nestjs/serve-static';
+import { BannersModule } from './banners/banners.module';
+import { join } from 'path';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -30,6 +35,11 @@ import { APP_GUARD } from '@nestjs/core';
       ttl: 60,   // waktu dalam detik (1 menit)
       limit: 5,  // maksimal 5 request per IP per menit
     }]),
+    ServeStaticModule.forRoot({
+      rootPath: join(__dirname, '..', process.env.UPLOAD_DIR || 'uploads'),
+      serveRoot: '/uploads', // URL prefix: /uploads/...
+    }),
+    BannersModule,
     AuthModule,
   ],
 })
