@@ -1,6 +1,5 @@
-// src/banners/dto/create-banner.dto.ts
 import { IsBoolean, IsOptional, IsString, IsUrl, IsUUID, IsInt } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 
 export class CreateBannerDto {
   @IsOptional()
@@ -13,27 +12,32 @@ export class CreateBannerDto {
 
   @IsOptional()
   @IsUUID()
-  media_id?: string | null; // jika frontend sudah ada media id (misal dari upload manual sebelumnya)
+  media_id?: string | null;
 
   @IsOptional()
   @IsUrl()
-  image_url?: string | null; // jika frontend punya URL eksternal
+  image_url?: string | null;
 
   @IsOptional()
-  @IsUUID()
-  article_id?: string | null;
-
-  @IsOptional()
-//   @IsUrl()
   @IsString()
   link_url?: string | null;
 
   @IsOptional()
-  @Type(() => Number)
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const n = Number(value);
+    return Number.isNaN(n) ? undefined : n;
+  })
   @IsInt()
   order_index?: number;
 
   @IsOptional()
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (typeof value === 'boolean') return value;
+    const v = String(value).toLowerCase().trim();
+    return v === 'true' || v === '1' || v === 'yes';
+  })
   @IsBoolean()
   is_active?: boolean;
 

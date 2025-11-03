@@ -1,7 +1,7 @@
 import {
   Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn
 } from 'typeorm';
-import { Media } from './media.entity';
+import { Media } from 'src/media/media.entity';
 
 @Entity('banners')
 export class Banner {

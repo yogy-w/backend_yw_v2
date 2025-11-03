@@ -1,11 +1,15 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Banner } from './entities/banner.entity';
-import { Media } from './entities/media.entity';
+import { Media } from 'src/media/media.entity';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { UpdateBannerDto } from './dto/update-banner.dto';
+import { CreateBannerDto } from './dto/create-banner.dto';
+
+// import tambahan di atas file (jika belum ada)
+import { DeepPartial } from 'typeorm';
 
 @Injectable()
 export class BannersService {
@@ -18,70 +22,92 @@ export class BannersService {
 
   private uploadDir = process.env.UPLOAD_DIR || './uploads';
   private mediaSubfolder = process.env.MEDIA_SUBFOLDER || 'banners';
-  private appBaseUrl = process.env.APP_BASE_URL || 'http://localhost:4000';
+  private appBaseUrl = (process.env.APP_BASE_URL || 'http://localhost:4000').replace(/\/$/, '');
 
-    // BACKWARDS-COMPAT wrapper (jika ada kode lama memanggil nama ini)
-  async createBannerWithOptionalFile(dto: any, file?: Express.Multer.File) {
-    return this.createBanner(dto, file);
-  }
-
-  // CREATE banner (termasuk optional file)
-  async createBanner(data: any, file?: Express.Multer.File) {
+  // CREATE banner (bisa file upload, media_id existing, atau image_url eksternal)
+  async createBanner(data: CreateBannerDto, file?: Express.Multer.File) {
     let media: Media | undefined;
 
-    if (file) {
-      // validasi sederhana: hanya image
+    // 1️⃣ Jika diberikan media_id -> gunakan media existing
+    if (data.media_id) {
+      const existing = await this.mediaRepo.findOne({ where: { id: data.media_id } });
+      if (!existing) throw new NotFoundException('Media not found');
+      media = existing;
+    }
+
+    // 2️⃣ Jika image_url eksternal diberikan -> buat record media tanpa file
+    if (!media && data.image_url) {
+      const mediaEntity = this.mediaRepo.create({
+        filename: data.image_url, // tidak ada file fisik
+        url: data.image_url,
+        mime: null,
+        size: null,
+        storage_bucket: null,
+        storage_path: null,
+        alt_text: data.title ?? null,
+        metadata: { source: 'external' },
+      });
+      media = await this.mediaRepo.save(mediaEntity);
+    }
+
+    // 3️⃣ Jika upload file
+    if (!media && file) {
       if (!file.mimetype || !file.mimetype.startsWith('image/')) {
-        throw new Error('Uploaded file is not an image');
+        throw new BadRequestException('Uploaded file is not an image');
       }
 
-      // pastikan folder tersedia
       const folderPath = path.join(this.uploadDir, this.mediaSubfolder);
       await fs.mkdir(folderPath, { recursive: true });
 
-      const filename = `${Date.now()}_${file.originalname}`;
+      const filename = `${Date.now()}_${file.originalname.replace(/\s+/g, '_')}`;
       const fullPath = path.join(folderPath, filename);
       await fs.writeFile(fullPath, file.buffer);
 
-      const fileUrl = `${this.appBaseUrl.replace(/\/$/, '')}/uploads/${this.mediaSubfolder}/${filename}`;
+      const fileUrl = `${this.appBaseUrl}/uploads/${this.mediaSubfolder}/${filename}`;
 
       const mediaEntity = this.mediaRepo.create({
         filename,
         url: fileUrl,
         mime: file.mimetype,
         size: file.size,
+        width: null,
+        height: null,
+        storage_bucket: null,
+        storage_path: `${this.mediaSubfolder}/${filename}`,
+        alt_text: data.title ?? null,
+        metadata: { from: 'banner_upload' },
       });
       media = await this.mediaRepo.save(mediaEntity);
     }
 
-    const bannerEntity = this.bannerRepo.create({
-      title: data.title ?? null,
-      caption: data.caption ?? null,
-      link_url: data.link_url ?? null,
-      order_index: typeof data.order_index === 'number' ? data.order_index : 0,
-      is_active: typeof data.is_active === 'boolean' ? data.is_active : true,
-      media: media ?? undefined,
-    });
+    // 4️⃣ Buat banner
+   // buat entity banner dengan tipe yang aman untuk TypeORM
+const bannerEntity = this.bannerRepo.create({
+  title: data.title ?? null,
+  caption: data.caption ?? null,
+  link_url: data.link_url ?? null,
+  order_index: typeof (data as any).order_index === 'number' ? (data as any).order_index : 0,
+  is_active: typeof (data as any).is_active === 'boolean' ? (data as any).is_active : true,
+  media: media ?? undefined,
+} as DeepPartial<Banner>);
 
     const saved = await this.bannerRepo.save(bannerEntity);
-    // kembalikan dengan relasi media
-    return this.bannerRepo.findOne({ where: { id: saved.id }, relations: ['media'] });
+    // TypeScript kadang tidak yakin saved.id ada -> pakai non-null assertion atau cast
+    return this.bannerRepo.findOne({
+    where: { id: (saved as Banner).id }, // atau id: saved.id!
+    relations: ['media'],
+    });
   }
 
   async findOne(id: string) {
-    return this.bannerRepo.findOne({
-      where: { id },
-      relations: ['media'],
-    });
+    return this.bannerRepo.findOne({ where: { id }, relations: ['media'] });
   }
 
   async findAll() {
-  return this.bannerRepo.find({
-    relations: ['media'],
-    order: { order_index: 'ASC' },
-  });
-}
+    return this.bannerRepo.find({ relations: ['media'], order: { order_index: 'ASC' } });
+  }
 
+  // UPDATE banner (opsional upload gambar baru)
   async updateBanner(id: string, data: UpdateBannerDto, file?: Express.Multer.File) {
     const banner = await this.bannerRepo.findOne({ where: { id }, relations: ['media'] });
     if (!banner) throw new NotFoundException('Banner not found');
@@ -89,37 +115,43 @@ export class BannersService {
     let media = banner.media;
 
     if (file) {
-      // hapus file lama (jika ada)
+      if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+        throw new BadRequestException('Uploaded file is not an image');
+      }
+
+      // Hapus file lama jika ada dan bukan dipakai banner lain
       if (media && media.filename) {
         const oldPath = path.join(this.uploadDir, this.mediaSubfolder, media.filename);
         try {
           await fs.unlink(oldPath);
         } catch {}
-
-        // hapus record lama dari DB
-        await this.mediaRepo.delete(media.id);
       }
 
-      // simpan file baru
+      // Cek apakah media masih dipakai banner lain
+      if (media && media.id) {
+        const count = await this.bannerRepo.count({ where: { media: { id: media.id } } });
+        if (count <= 1) await this.mediaRepo.delete(media.id);
+      }
+
+      // Simpan file baru
       const folderPath = path.join(this.uploadDir, this.mediaSubfolder);
       await fs.mkdir(folderPath, { recursive: true });
-
-      const filename = `${Date.now()}_${file.originalname}`;
+      const filename = `${Date.now()}_${file.originalname.replace(/\s+/g, '_')}`;
       const fullPath = path.join(folderPath, filename);
       await fs.writeFile(fullPath, file.buffer);
       const fileUrl = `${this.appBaseUrl}/uploads/${this.mediaSubfolder}/${filename}`;
 
-      // buat record media baru
       const newMedia = this.mediaRepo.create({
         filename,
         url: fileUrl,
         mime: file.mimetype,
         size: file.size,
+        storage_path: `${this.mediaSubfolder}/${filename}`,
+        metadata: { updated_from_banner: id },
       });
       media = await this.mediaRepo.save(newMedia);
     }
 
-    // update data banner
     Object.assign(banner, {
       title: data.title ?? banner.title,
       caption: data.caption ?? banner.caption,
@@ -130,24 +162,30 @@ export class BannersService {
     });
 
     const updated = await this.bannerRepo.save(banner);
-    return updated;
+    return this.bannerRepo.findOne({ where: { id: updated.id }, relations: ['media'] });
   }
 
+  // DELETE banner dan hapus media jika tidak digunakan lagi
   async deleteBanner(id: string) {
     const banner = await this.bannerRepo.findOne({ where: { id }, relations: ['media'] });
     if (!banner) return false;
 
-    // hapus file fisik
-    if (banner.media?.filename) {
-      const filePath = path.join(this.uploadDir, this.mediaSubfolder, banner.media.filename);
-      try {
-        await fs.unlink(filePath);
-      } catch {}
+    const media = banner.media;
+    await this.bannerRepo.delete(id);
+
+    if (media && media.id) {
+      const count = await this.bannerRepo.count({ where: { media: { id: media.id } } });
+      if (count === 0) {
+        if (media.filename && media.storage_path) {
+          const filePath = path.join(this.uploadDir, this.mediaSubfolder, media.filename);
+          try {
+            await fs.unlink(filePath);
+          } catch {}
+        }
+        await this.mediaRepo.delete(media.id);
+      }
     }
 
-    // hapus data di DB
-    await this.bannerRepo.delete(id);
-    if (banner.media?.id) await this.mediaRepo.delete(banner.media.id);
     return true;
   }
 }

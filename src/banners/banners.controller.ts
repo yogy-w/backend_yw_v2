@@ -1,3 +1,4 @@
+// src/banners/banners.controller.ts
 import {
   Body,
   Controller,
@@ -12,31 +13,31 @@ import {
   Put,
   Delete,
   NotFoundException,
-  UseGuards
+  UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { BannersService } from './banners.service';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { UpdateBannerDto } from './dto/update-banner.dto';
+import * as multer from 'multer';
 
 // import JwtAuthGuard
 import { JwtAuthGuard } from '../auth/jwt.guard';
 import { RolesGuard } from '../roles/roles.guard';
 import { Roles } from '../roles/roles.decorator';
 
-
 @Controller('banners')
 export class BannersController {
   constructor(private readonly bannersService: BannersService) {}
 
-  // 🟢 GET all banners
+  // GET all banners (untuk dashboard admin / landing)
   @Get()
   async findAll() {
     const data = await this.bannersService.findAll();
     return { success: true, data };
   }
 
-  // 🟢 GET single banner
+  // GET single banner
   @Get(':id')
   async findOne(@Param('id') id: string) {
     const banner = await this.bannersService.findOne(id);
@@ -44,11 +45,17 @@ export class BannersController {
     return { success: true, data: banner };
   }
 
-  // 🟢 POST new banner (with optional image)
-  @UseGuards(JwtAuthGuard,RolesGuard)
+  // POST new banner (with optional image)
+  // dilindungi untuk admin
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('admin')
   @Post()
-  @UseInterceptors(FileInterceptor('image', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: multer.memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    }),
+  )
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   async create(@Body() body: CreateBannerDto, @UploadedFile() file?: Express.Multer.File) {
     try {
@@ -59,11 +66,16 @@ export class BannersController {
     }
   }
 
-  // 🟡 PUT update banner (optionally upload new image)
-  @UseGuards(JwtAuthGuard,RolesGuard)
+  // PUT update banner (optionally upload new image)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('admin')
   @Put(':id')
-  @UseInterceptors(FileInterceptor('image', { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: multer.memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
   async update(
     @Param('id') id: string,
     @Body() body: UpdateBannerDto,
@@ -77,8 +89,8 @@ export class BannersController {
     }
   }
 
-  // 🔴 DELETE banner (and optionally delete its file)
-  @UseGuards(JwtAuthGuard,RolesGuard)
+  // DELETE banner (and its media if unused)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('admin')
   @Delete(':id')
   async remove(@Param('id') id: string) {

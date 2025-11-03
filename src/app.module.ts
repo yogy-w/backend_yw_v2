@@ -12,6 +12,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { BannersModule } from './banners/banners.module';
 import { join } from 'path';
+import { KajianModule } from './kajian/kajian.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { join } from 'path';
     }),
     BannersModule,
     AuthModule,
+    KajianModule,
   ],
 })
 export class AppModule {}
