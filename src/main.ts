@@ -59,7 +59,7 @@ app.use((req: any, res: any, next: any) => {
   // ================================================================
   if (url.startsWith('/uploads')) {
     // ini adalah request untuk file upload → lanjutkan ke pengecekan file
-    const rel = req.path.replace(/^\/+/, ''); // e.g. banners/xxx.jpg
+    const rel = req.path.replace(/^\/uploads\//, ''); // e.g. banners/xxx.jpg
     const tried: string[] = [];
     const candidates = [
       { base: rootUploads, rel },
