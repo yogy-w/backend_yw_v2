@@ -52,7 +52,8 @@ async register(email: string, password: string, roleName: string) {
 
   // 🔹 Generate JWT
   async createJwt(user: User) {
-    const secret = this.config.get<string>('jwt.secret');
+    // ambil langsung dari env: JWT_SECRET
+  const secret = this.config.get<string>('JWT_SECRET');
     if (!secret) throw new Error('JWT secret not found');
 
     const secretKey = new TextEncoder().encode(secret);

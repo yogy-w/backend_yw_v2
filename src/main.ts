@@ -1,21 +1,24 @@
-// src/main.ts  (static + debug middleware, dengan proteksi path traversal)
+// src/main.ts (safe + restored)
+// static + debug middleware, dengan proteksi path traversal
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ConfigService } from '@nestjs/config';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
-import * as express from 'express';
+import cookieParser from 'cookie-parser';
+import * as bodyParser from 'body-parser';
 import { join, resolve } from 'path';
 import { existsSync } from 'fs';
+import { Response } from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
-  const port = configService.get<number>('PORT') ?? 3000;
+  const port = configService.get<number>('PORT') ?? 4000;
   const frontendUrl = configService.get<string>('FRONTEND_URL') ?? 'http://localhost:3000';
 
-  // --- Static uploads debug / safe file serving ---
-  const rootUploads = join(process.cwd(), 'uploads');      // project_root/uploads (preferred)
+  // --- candidate upload folders (debug) ---
+  const rootUploads = join(process.cwd(), 'uploads');      // project_root/uploads
   const distUploads1 = join(__dirname, 'uploads');        // dist/uploads (if present)
   const distUploads2 = join(__dirname, '..', 'uploads');  // dist/../uploads (alternate)
 
@@ -24,26 +27,46 @@ async function bootstrap() {
   console.log(' - distUploads1:', distUploads1, 'exists=', existsSync(distUploads1));
   console.log(' - distUploads2:', distUploads2, 'exists=', existsSync(distUploads2));
 
-  /**
-   * Middleware: serve file from any of the candidate upload folders.
-   * - debug logs
-   * - protect against path traversal by resolving absolute paths and ensuring they remain under the intended upload folders
-   * - return 404 JSON when not found
-   *
-   * Note: this middleware is mounted at "/uploads", not under "/api"
-   * (because we call app.setGlobalPrefix('api') later).
-   */
-  app.use('/uploads', (req, res, next) => {
+  // --- body parser (with raw capture) to ensure Nest parses JSON correctly ---
+  app.use(bodyParser.json({
+    verify: (req: any, _res, buf) => {
+      try { req.rawBody = buf?.toString(); } catch { req.rawBody = undefined; }
+    }
+  }));
+
+  // --- cookie parser ---
+  app.use(cookieParser());
+
+  // --- uploads middleware (only handles /uploads, otherwise passes through) ---
+  // --- uploads + auth nocache middleware (FIXED ORDER & SAFE) ---
+app.use((req: any, res: any, next: any) => {
+  const url = req.originalUrl || '';
+
+  // ================================================================
+  // 1) NO-CACHE untuk /api/auth (HARUS di atas, supaya tidak tertelan upload logic)
+  // ================================================================
+  if (url.startsWith('/api/auth')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('ETag', '');
+    // lanjutkan ke controller auth
+    return next();
+  }
+
+  // ================================================================
+  // 2) HANDLE FILE UPLOADS (seperti logic kamu sebelumnya)
+  // ================================================================
+  if (url.startsWith('/uploads')) {
+    // ini adalah request untuk file upload → lanjutkan ke pengecekan file
     const rel = req.path.replace(/^\/+/, ''); // e.g. banners/xxx.jpg
     const tried: string[] = [];
-
     const candidates = [
       { base: rootUploads, rel },
       { base: distUploads1, rel },
       { base: distUploads2, rel },
     ];
 
-    // debug log basic request
     console.log('[UPLOADS DEBUG] req=', req.method, req.originalUrl);
 
     for (const c of candidates) {
@@ -52,10 +75,9 @@ async function bootstrap() {
         const resolvedCandidate = resolve(candidatePath);
         const resolvedBase = resolve(c.base);
 
-        // proteksi path traversal: pastikan resolvedCandidate masih berada di bawah resolvedBase
-        if (!resolvedCandidate.startsWith(resolvedBase + (process.platform === 'win32' ? '' : pathSeparator()))) {
-          // On some environments startsWith-resolvedBase alone is ok, but we normalize with separator check.
-          // treat as not found for this candidate
+        const sep = pathSeparator();
+        if (!resolvedCandidate.startsWith(resolvedBase + (process.platform === 'win32' ? '' : sep)) &&
+            resolvedCandidate !== resolvedBase) {
           tried.push(resolvedCandidate + ' (rejected - traversal)');
           continue;
         }
@@ -64,42 +86,51 @@ async function bootstrap() {
         if (existsSync(resolvedCandidate)) {
           console.log('[UPLOADS DEBUG] serving file ->', resolvedCandidate);
           return res.sendFile(resolvedCandidate);
-        } else {
-          // file not exists for this candidate
-          continue;
         }
       } catch (err) {
-        // log and continue to next candidate
         console.warn('[UPLOADS DEBUG] candidate check error:', err?.message ?? err);
         continue;
       }
     }
 
-    // not found in any candidate
     console.log('[UPLOADS DEBUG] not found, tried:', tried);
-    res.status(404).json({
+    return res.status(404).json({
       message: 'Not Found',
       error: 'Not Found',
       tried,
     });
+  }
+
+  // ================================================================
+  // 3) SEMUA ROUTE LAIN → lanjut
+  // ================================================================
+  return next();
+});
+
+
+  // --- global settings ---
+  app.setGlobalPrefix('api');
+
+  app.enableCors({
+    origin: frontendUrl,
+    credentials: true,
   });
 
-  // --- rest of your setup ---
-  app.setGlobalPrefix('api');
+  app.useGlobalPipes(new ValidationPipe({
+    whitelist: true,
+    forbidNonWhitelisted: true,
+    transform: true,
+  }));
+
+  // helmet last so it won't interfere with body parsing / middleware ordering
   app.use(helmet());
-  app.enableCors({ origin: frontendUrl, credentials: true });
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
 
   await app.listen(port);
-  console.log(`🚀 Server running on http://localhost:${port}/api`);
-  console.log(`✅ CORS enabled for: ${frontendUrl}`);
+  console.log(`🚀 Server running at http://localhost:${port}/api`);
+  console.log(`✅ CORS allowed for: ${frontendUrl}`);
 }
 
-/**
- * Helper to return platform-specific path separator as string.
- * We use this to make a conservative check for startsWith(base + sep) to avoid
- * accidental true positives (e.g. /uploads1 startingWith /uploads).
- */
+/** platform-specific separator helper */
 function pathSeparator() {
   return process.platform === 'win32' ? '\\' : '/';
 }

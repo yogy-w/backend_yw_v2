@@ -30,6 +30,12 @@ import { KajianModule } from './kajian/kajian.module';
         url: config.get<string>('database.url')!, // 🔥 ambil dari configuration.ts
         entities: [__dirname + '/**/*.entity{.ts,.js}'], // otomatis scan semua entity,
         synchronize: false,// pakai migration di production
+         extra: {
+          ssl: { rejectUnauthorized: false },
+          keepAlive: true,
+          keepAliveInitialDelayMillis: 5000,
+          connectionTimeoutMillis: 10000,
+        },
       }),
     }),
      ThrottlerModule.forRoot([{

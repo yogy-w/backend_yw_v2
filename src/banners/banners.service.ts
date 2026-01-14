@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DeepPartial } from 'typeorm';
 import { Banner } from './entities/banner.entity';
 import { Media } from 'src/media/media.entity';
 import * as fs from 'fs/promises';
@@ -8,8 +8,6 @@ import * as path from 'path';
 import { UpdateBannerDto } from './dto/update-banner.dto';
 import { CreateBannerDto } from './dto/create-banner.dto';
 
-// import tambahan di atas file (jika belum ada)
-import { DeepPartial } from 'typeorm';
 
 @Injectable()
 export class BannersService {
@@ -91,9 +89,9 @@ const bannerEntity = this.bannerRepo.create({
   media: media ?? undefined,
 } as DeepPartial<Banner>);
 
-    const saved = await this.bannerRepo.save(bannerEntity);
+const saved = await this.bannerRepo.save(bannerEntity);
     // TypeScript kadang tidak yakin saved.id ada -> pakai non-null assertion atau cast
-    return this.bannerRepo.findOne({
+  return this.bannerRepo.findOne({
     where: { id: (saved as Banner).id }, // atau id: saved.id!
     relations: ['media'],
     });
